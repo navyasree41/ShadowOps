@@ -1,151 +1,329 @@
 # ShadowOps
 
-ShadowOps is an incident-response workspace for SRE teams. It investigates simulated production symptoms, inspects service signals, recalls prior incident outcomes from Hindsight, and records failed and successful remediation as persistent organizational memory.
+ShadowOps is an incident-response workspace for SRE teams. It investigates service incidents, inspects service signals, recalls prior incident outcomes from Hindsight, and records remediation results as persistent organizational memory.
 
-> This project operates on deterministic simulated services. It does not connect to or modify production infrastructure.
+> ShadowOps currently operates on deterministic simulated services and does not connect to or modify production infrastructure.
 
 ## The Problem
 
-During an incident, engineers often repeat investigations and remediation attempts because prior incidents are scattered across tickets, logs, and chat. Restarting a service may temporarily hide a database pool failure without fixing it. A stateless assistant cannot distinguish that temporary recovery from the later action that worked.
+During an incident, engineers often repeat investigations and remediation attempts because knowledge from previous incidents is scattered across tickets, logs, documentation, and conversations.
+
+A restart may temporarily recover a service without addressing the underlying problem. Without persistent memory, a future investigation may repeat the same failed approach.
 
 ## The Solution
 
-ShadowOps combines fixture-backed incident tools with a dedicated Hindsight memory bank. The agent inspects current logs, metrics, deployments, service state, and dependencies; recalls relevant historical facts; and keeps failed, partial, and successful remediation outcomes separate. Resolved incidents are retained to Hindsight, so later investigations can use their actual returned facts.
+ShadowOps combines incident investigation tools with a dedicated Hindsight memory bank.
 
-## Why Hindsight
+The system:
 
-Hindsight is the long-term memory system, not a chat log or UI decoration. ShadowOps uses its official Python client for real retain and recall operations. The app database stores operational state and receipts; it does not substitute for historical memory. Removing Hindsight recall removes the agent's cross-incident retrieval capability.
+- Inspects current logs, metrics, deployments, service state, and dependencies.
+- Recalls relevant outcomes from previous incidents using Hindsight.
+- Keeps failed, partial, and successful remediation attempts separate.
+- Records resolved incidents and their lessons as persistent memory.
+- Uses previously recorded outcomes to provide useful context during future investigations.
+
+## Why Hindsight?
+
+Hindsight acts as the long-term memory layer for ShadowOps.
+
+The application database stores operational state such as incidents, tool traces, remediation attempts, and write receipts. Hindsight stores the cross-incident knowledge that can be recalled during future investigations.
+
+ShadowOps uses the official Hindsight Python client for real retain and recall operations.
 
 - [Hindsight GitHub](https://github.com/vectorize-io/hindsight)
-- [Hindsight documentation](https://hindsight.vectorize.io/)
-- [Vectorize agent memory](https://vectorize.io/what-is-agent-memory)
+- [Hindsight Documentation](https://hindsight.vectorize.io/)
+- [What is Agent Memory?](https://vectorize.io/what-is-agent-memory)
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  Operator --> UI[React + TypeScript]
-  UI --> API[FastAPI]
-  API --> Planner[Groq tool planner]
-  Planner --> Tools[Fixture-backed SRE tools]
-  API --> DB[(SQLite incident ledger)]
-  API --> HSDK[Official Hindsight Python client]
-  HSDK --> Cloud[Hindsight Cloud memory bank]
+```text
+                         ┌──────────────────────┐
+                         │     ShadowOps UI     │
+                         │ React + TypeScript   │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │     FastAPI API      │
+                         │    Python Backend    │
+                         └──────────┬───────────┘
+                                    │
+                 ┌──────────────────┼──────────────────┐
+                 │                  │                  │
+                 ▼                  ▼                  ▼
+        ┌────────────────┐ ┌───────────────┐ ┌─────────────────┐
+        │ Incident Tools │ │    SQLite     │ │    Hindsight    │
+        │ Logs / Metrics │ │ Operational   │ │ Long-term       │
+        │ Health / Deps  │ │ State & Traces│ │ Memory          │
+        └────────────────┘ └───────────────┘ └─────────────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │   Groq Tool Planner  │
+                         │ Function Calling /   │
+                         │ Rules-based Fallback │
+                         └──────────────────────┘
 ```
 
-The Groq planner uses function calling when `GROQ_API_KEY` is configured. If omitted, a clearly labeled rules planner chooses tools by symptom. Hindsight and Groq keys stay on the backend.
+The Groq planner uses function calling when `GROQ_API_KEY` is configured. When it is not configured, ShadowOps uses an explicit rules-based planner.
+
+Hindsight and Groq credentials remain on the backend.
 
 ## Memory Lifecycle
 
 1. The operator submits incident details.
-2. Groq selects bounded, validated investigation tools; the rules fallback is explicit if no Groq key is configured.
-3. Tools read deterministic service fixtures and return structured evidence.
-4. ShadowOps queries Hindsight with a compact symptom/evidence query. The UI only displays facts returned by that recall.
-5. The operator runs one or more deterministic remediation simulations; each result is recorded as failed, partial, or successful.
-6. On resolution, each attempt is retained in its own stable Hindsight document with outcome/action metadata. A separate summary document stores root cause and lesson.
-7. ShadowOps records an app-side Hindsight write receipt only after all synchronous retains succeed.
-8. A later investigation can retrieve those facts and adjust its recommendation.
+2. The planner selects bounded investigation tools.
+3. Tools inspect deterministic service fixtures and return structured evidence.
+4. ShadowOps sends a compact incident query to Hindsight.
+5. Relevant historical facts are recalled and displayed to the operator.
+6. The operator runs one or more remediation simulations.
+7. Each remediation result is recorded as **Failed**, **Partial**, or **Successful**.
+8. When the incident is resolved, the remediation attempts and incident summary are retained in Hindsight.
+9. A later investigation can recall those facts and use them as historical context.
 
 ## Features
 
-- Five simulated services: checkout, payment, order, auth, and notifications.
-- Structured service health, logs, metrics, deployments, and dependency-health tools.
-- Bounded Groq function calling with schema validation, malformed-call errors, and a visible rules fallback.
-- Real Hindsight Cloud recall and retain, explicit unavailable/empty states, stable document IDs, and returned metadata.
-- Deterministic incident remediation simulation, including checkout 503/database pool failure and recovery.
-- SQLite persistence for incidents, tool traces, remediation attempts, confirmed Hindsight receipts, and measured evaluation runs.
-- Demo seed and reset/reseed endpoints. Reset only clears local app state; it does not delete the Hindsight bank. Stable demo document IDs are safely replaced on reseed.
-- Side-by-side memory-disabled and Hindsight-enabled evaluation of the same incident. Latency and recalled evidence are measured per run; no improvement percentage is fabricated.
-- Responsive operator UI for overview, investigation, timeline, memory evidence, service health, and evaluation.
+- Five simulated services:
+  - Checkout
+  - Payment
+  - Order
+  - Authentication
+  - Notifications
+- Structured service health, logs, metrics, deployment, and dependency tools.
+- Groq-compatible function calling with schema validation.
+- Explicit rules-based fallback when Groq is unavailable.
+- Real Hindsight Cloud recall and retain operations.
+- Stable Hindsight document identifiers.
+- Clear unavailable and empty-memory states.
+- Deterministic remediation simulations.
+- SQLite persistence for incidents, tool traces, remediation attempts, and Hindsight write receipts.
+- Demo seed and reset/reseed functionality.
+- Side-by-side evaluation with and without Hindsight recall.
+- Responsive interface for investigation, timeline, memory evidence, service health, and evaluation.
 
-## Requirements and Design Records
+## Example Incident
 
-- [Hackathon requirements and traceability](docs/HACKATHON_REQUIREMENTS.md)
-- [Content checklist](docs/CONTENT_REQUIREMENTS.md)
-- [Hindsight design and API integration](docs/HINDSIGHT_ARCHITECTURE.md)
-- [Implementation architecture and status](docs/ARCHITECTURE.md)
-- [Demo runbook](docs/DEMO_RUNBOOK.md)
-- [Evaluation methodology](docs/EVALUATION.md)
-- [Final audit](docs/FINAL_HACKATHON_AUDIT.md)
+Consider a checkout service returning `503` errors because its database connection pool is exhausted.
+
+A restart may temporarily restore the service, but the underlying database pool limitation remains.
+
+ShadowOps can:
+
+1. Inspect the current service signals.
+2. Recall a previous incident from Hindsight.
+3. Identify that restarting the service previously provided only temporary recovery.
+4. Simulate the restart and record it as a failed or partial remediation.
+5. Simulate increasing the database connection pool.
+6. Record the successful remediation.
+7. Retain the outcome in Hindsight.
+
+If a similar incident occurs later, the previous remediation history can be recalled instead of starting from scratch.
 
 ## Technology
 
-- Frontend: React 19, TypeScript, Vite, Lucide icons.
-- Backend: Python, FastAPI, Pydantic, SQLite.
-- Agent tool planner: Groq-compatible chat completions/function calling (optional rules fallback).
-- Memory: official `hindsight-client` against Hindsight Cloud or a local Hindsight API server.
+### Frontend
+
+- React 19
+- TypeScript
+- Vite
+- Lucide Icons
+
+### Backend
+
+- Python
+- FastAPI
+- Pydantic
+- SQLite
+
+### Agent Planner
+
+- Groq-compatible chat completions
+- Function calling
+- Rules-based fallback
+
+### Memory
+
+- Hindsight
+- Official `hindsight-client`
+- Hindsight Cloud or compatible local Hindsight API
 
 ## Setup
 
-Use Python 3.11+ and Node.js 20+.
+Requirements:
+
+- Python 3.11+
+- Node.js 20+
+
+Create the Python environment:
 
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
+```
+
+Install backend dependencies:
+
+```powershell
 pip install -r requirements-dev.txt
+```
+
+Install frontend dependencies:
+
+```powershell
 npm --prefix frontend install
+```
+
+Create the environment file:
+
+```powershell
 Copy-Item .env.example .env
 ```
 
-Edit `.env` locally. Required for live memory:
+Edit `.env` locally.
 
-```dotenv
+For Hindsight Cloud:
+
+```env
 HINDSIGHT_API_URL=https://api.hindsight.vectorize.io
 HINDSIGHT_BANK_ID=shadowops-demo
 HINDSIGHT_API_KEY=your-real-cloud-api-key
 ```
 
-Optional tool-selection LLM:
+Optional Groq configuration:
 
-```dotenv
+```env
 GROQ_API_KEY=your-groq-api-key
 GROQ_MODEL=openai/gpt-oss-120b
 ```
 
-For a local Hindsight server, change the API URL to its endpoint and leave its own extraction LLM configured on that service. `.env` is ignored by Git; `.env.example` contains names/placeholders only. Never put keys in frontend variables or commit them.
+For a local Hindsight server, change `HINDSIGHT_API_URL` to the appropriate local endpoint.
+
+> Never commit API keys or other secrets. `.env` is ignored by Git, while `.env.example` contains placeholders only.
 
 ## Run Locally
 
-Terminal 1, backend:
+### Backend
+
+Open a terminal and run:
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn backend.shadowops.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Terminal 2, frontend:
+### Frontend
+
+Open another terminal:
 
 ```powershell
 npm --prefix frontend run dev
 ```
 
-Open `http://127.0.0.1:5173`. FastAPI OpenAPI docs are at `http://127.0.0.1:8000/docs`; backend health is at `http://127.0.0.1:8000/health`.
+Open:
 
-The SQLite ledger defaults to `data/shadowops.sqlite3`. Override with `SHADOWOPS_DB_PATH` if desired. This database is app state only; Hindsight remains the long-term memory system.
+```text
+http://127.0.0.1:5173
+```
 
-## Demo
+FastAPI documentation:
 
-Follow [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md). The short story: seed real Hindsight memories, investigate checkout 503s, inspect current tool evidence and recalled outcomes, simulate a failed restart, simulate the successful pool expansion, resolve/retain, and investigate a repeat incident.
+```text
+http://127.0.0.1:8000/docs
+```
+
+Backend health:
+
+```text
+http://127.0.0.1:8000/health
+```
+
+The SQLite ledger defaults to:
+
+```text
+data/shadowops.sqlite3
+```
+
+You can override this using `SHADOWOPS_DB_PATH`.
+
+The SQLite database stores application state only. Hindsight remains the long-term memory layer.
+
+## Demo Flow
+
+A typical investigation follows this flow:
+
+```text
+Seed Hindsight Memories
+        ↓
+Investigate Incident
+        ↓
+Inspect Current Signals
+        ↓
+Recall Historical Outcomes
+        ↓
+Review Recommended Action
+        ↓
+Run Remediation
+        ↓
+Record Outcome
+        ↓
+Retain Resolution in Hindsight
+        ↓
+Investigate a Similar Incident
+        ↓
+Recall Previous Knowledge
+```
+
+For the detailed walkthrough, see [`docs/DEMO_RUNBOOK.md`](docs/DEMO_RUNBOOK.md).
 
 ## Evaluation
 
-The evaluation page makes two actual runs on the same input: one skips Hindsight recall; one performs real recall. Tool calls and current fixtures are retained in both arms. Measured latency, number of returned facts, and presence of explicitly tagged outcomes are saved to SQLite. See [docs/EVALUATION.md](docs/EVALUATION.md) for interpretation and limits.
+ShadowOps includes an evaluation workflow that compares the same incident with and without Hindsight recall.
+
+The evaluation records:
+
+- Tool calls
+- Current incident evidence
+- Returned Hindsight facts
+- Explicitly tagged remediation outcomes
+- Measured latency
+- Evaluation run data
+
+The results are stored in SQLite and can be reviewed through the evaluation interface.
+
+See [`docs/EVALUATION.md`](docs/EVALUATION.md) for details.
 
 ## Tests
 
+Run backend tests:
+
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests -q
+```
+
+Build the frontend:
+
+```powershell
 npm --prefix frontend run build
 ```
 
-The live Hindsight Cloud lifecycle test is opt-in via `RUN_HINDSIGHT_CLOUD_E2E=1` in `.env`; it writes uniquely named test records to the configured bank. A passing unit test with an in-memory test double is not a live Hindsight verification.
+The live Hindsight Cloud lifecycle test is opt-in through:
 
-## Hackathon and Content Status
+```env
+RUN_HINDSIGHT_CLOUD_E2E=1
+```
 
-The official criteria and deliverables are mapped in [docs/HACKATHON_REQUIREMENTS.md](docs/HACKATHON_REQUIREMENTS.md). The implementation audit distinguishes working software from external obligations. Articles, social posts, public Reddit submissions, a YouTube team video, screenshots/publication, and the live judge presentation still require team members to create and publish them; see [docs/CONTENT_REQUIREMENTS.md](docs/CONTENT_REQUIREMENTS.md).
+A unit test using an in-memory test double does not verify the live Hindsight Cloud integration.
+
+## Project Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Hindsight Architecture](docs/HINDSIGHT_ARCHITECTURE.md)
+- [Demo Runbook](docs/DEMO_RUNBOOK.md)
+- [Evaluation](docs/EVALUATION.md)
 
 ## Future Improvements
 
-- Add a production-grade LLM answer synthesis layer with strict evidence citations after the tool/memory flow.
-- Add application authentication and team/tenant boundaries before any real operational data is used.
-- Replace deterministic fixtures with explicitly authorized observability integrations only if this moves beyond the hackathon simulation.
-- Run repeated evaluation datasets and report aggregates with uncertainty rather than inferring results from a single comparison.
+- Add an LLM-based answer synthesis layer with strict evidence citations.
+- Add authentication and team/tenant boundaries.
+- Replace deterministic fixtures with authorized observability integrations.
+- Expand evaluation to repeated datasets and report aggregate results with uncertainty.
+- Support additional incident types and remediation workflows.
