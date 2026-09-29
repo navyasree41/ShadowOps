@@ -1,0 +1,88 @@
+from .models import IncidentRequest, RemediationAttempt, ResolveIncidentRequest
+
+
+DEMO_INCIDENTS = [
+    ResolveIncidentRequest.model_validate({
+        "incident": {"incident_id": "DEMO-INC-001", "service": "checkout-service", "symptoms": "HTTP 503 rate reached 84.6%; database connection pool at capacity with 42 waiting requests", "environment": "staging", "deployment_version": "checkout-2.14.3", "evidence": ["p95 latency 8.42s", "pool used 100/100", "postgres acquire timeout 5000ms"]},
+        "root_cause": "Database connection pool exhaustion under checkout burst load",
+        "remediation_attempts": [
+            {"action": "Restart checkout-service", "outcome": "failed", "details": "Error rate recovered for four minutes, then 503 responses returned as connections saturated again.", "duration_minutes": 4},
+            {"action": "Increase checkout database pool from 100 to 180", "outcome": "successful", "details": "Waiting requests drained and 503 rate returned below 0.3% for 30 minutes.", "duration_minutes": 12},
+        ],
+        "lesson": "A process restart only clears symptoms temporarily; increasing pool capacity resolved this saturation pattern.",
+        "recovery_time_minutes": 12,
+        "occurred_at": "2026-09-20T10:30:00Z",
+    }),
+    ResolveIncidentRequest.model_validate({
+        "incident": {"incident_id": "DEMO-INC-002", "service": "payment-service", "symptoms": "Authorization calls timing out after provider latency increased to 4.8s", "environment": "production-sim", "deployment_version": "payment-5.7.1", "evidence": ["card gateway p95 4800ms", "local CPU 48%", "provider 429 rate 7.1%"]},
+        "root_cause": "Card gateway throttling after retry burst",
+        "remediation_attempts": [{"action": "Increase client retry count", "outcome": "failed", "details": "Provider throttling increased as retries amplified request volume.", "duration_minutes": 9}, {"action": "Apply exponential backoff and cap retries", "outcome": "successful", "details": "429 responses fell below 0.5% and authorization p95 returned to 220ms.", "duration_minutes": 18}],
+        "lesson": "When a provider is rate limiting, more immediate retries amplify the outage; bounded exponential backoff reduced pressure.",
+        "recovery_time_minutes": 18,
+        "occurred_at": "2026-09-21T13:45:00Z",
+    }),
+    ResolveIncidentRequest.model_validate({
+        "incident": {"incident_id": "DEMO-INC-003", "service": "notification-service", "symptoms": "Email queue backlog grew beyond 18,000 messages and worker memory approached 90%", "environment": "production-sim", "deployment_version": "notify-4.2.6", "evidence": ["queue depth 18,420", "worker memory 89%", "mail provider p95 2400ms"]},
+        "root_cause": "Memory growth in long-lived email workers while provider latency caused queued payload retention",
+        "remediation_attempts": [{"action": "Scale workers from 3 to 6", "outcome": "partial", "details": "Drain rate improved but memory continued rising on each long-lived worker.", "duration_minutes": 15}, {"action": "Recycle workers after bounded batches and cap concurrency", "outcome": "successful", "details": "Memory stabilized at 61% and backlog drained at 410 messages per minute.", "duration_minutes": 35}],
+        "lesson": "Horizontal scaling alone did not stop per-process memory growth; bounded worker lifetimes prevented recurrence.",
+        "recovery_time_minutes": 35,
+        "occurred_at": "2026-09-22T08:10:00Z",
+    }),
+    ResolveIncidentRequest.model_validate({
+        "incident": {"incident_id": "DEMO-INC-004", "service": "order-service", "symptoms": "Order API p95 latency rose to 2.1s after version 3.9.1 rollout", "environment": "staging", "deployment_version": "orders-3.9.1", "evidence": ["database p95 31ms", "application p95 2100ms", "new serialization path enabled"]},
+        "root_cause": "Regression in the new order response serialization path",
+        "remediation_attempts": [{"action": "Increase database connection count", "outcome": "failed", "details": "Database latency was already normal and application latency did not improve.", "duration_minutes": 10}, {"action": "Rollback orders-3.9.1 to orders-3.9.0", "outcome": "successful", "details": "p95 latency returned to 182ms within one deployment window.", "duration_minutes": 8}],
+        "lesson": "When service latency changes immediately after a rollout but dependency latency remains normal, validate and roll back the new application path before tuning the database.",
+        "recovery_time_minutes": 8,
+        "occurred_at": "2026-09-22T16:20:00Z",
+    }),
+    ResolveIncidentRequest.model_validate({
+        "incident": {"incident_id": "DEMO-INC-005", "service": "auth-service", "symptoms": "Token validation returned intermittent 401 after signing key rotation", "environment": "production-sim", "deployment_version": "auth-1.22.0", "evidence": ["old key removed before all replicas refreshed", "401 rate 12.4%", "CPU 29%"]},
+        "root_cause": "Signing key rotation overlap was shorter than replica refresh propagation",
+        "remediation_attempts": [{"action": "Restart all auth replicas", "outcome": "partial", "details": "Some replicas loaded the new key but refresh timing still varied.", "duration_minutes": 6}, {"action": "Restore prior key temporarily and publish both keys during rotation overlap", "outcome": "successful", "details": "401 rate returned below 0.1% after all replicas refreshed.", "duration_minutes": 14}],
+        "lesson": "Key rotation must preserve an overlap window long enough for all replicas and caches to refresh.",
+        "recovery_time_minutes": 14,
+        "occurred_at": "2026-09-23T11:05:00Z",
+    }),
+    ResolveIncidentRequest.model_validate({
+        "incident": {"incident_id": "DEMO-INC-006", "service": "checkout-service", "symptoms": "Checkout API timed out while Redis hit rate fell from 94% to 38%", "environment": "staging", "deployment_version": "checkout-2.14.3", "evidence": ["redis timeout p95 900ms", "database pool used 66/180", "cache connection resets"]},
+        "root_cause": "Redis failover left application clients holding stale connections",
+        "remediation_attempts": [{"action": "Increase checkout database pool", "outcome": "failed", "details": "Database pool was not saturated and the timeout rate remained elevated.", "duration_minutes": 11}, {"action": "Refresh Redis client connections and verify failover endpoint", "outcome": "successful", "details": "Cache hit rate returned to 93% and checkout p95 fell to 240ms.", "duration_minutes": 9}],
+        "lesson": "Check dependency saturation before changing database capacity; stale cache connections were the failure source.",
+        "recovery_time_minutes": 9,
+        "occurred_at": "2026-09-24T09:40:00Z",
+    }),
+    ResolveIncidentRequest.model_validate({
+        "incident": {"incident_id": "DEMO-INC-007", "service": "order-service", "symptoms": "Queue consumers fell behind; order event depth reached 26,300", "environment": "production-sim", "deployment_version": "orders-3.9.0", "evidence": ["consumer lag 26,300", "broker healthy", "poison event retries 31%"]},
+        "root_cause": "A malformed event repeatedly retried and blocked one ordered partition",
+        "remediation_attempts": [{"action": "Increase consumer replica count", "outcome": "partial", "details": "Other partitions drained but the blocked partition remained stuck.", "duration_minutes": 20}, {"action": "Quarantine the invalid event and resume the affected partition", "outcome": "successful", "details": "Lag declined steadily and reached 94 messages after 22 minutes.", "duration_minutes": 22}],
+        "lesson": "Scaling consumers cannot clear an ordered partition blocked by a poison event; isolate the failing event and preserve it for replay analysis.",
+        "recovery_time_minutes": 22,
+        "occurred_at": "2026-09-24T18:15:00Z",
+    }),
+    ResolveIncidentRequest.model_validate({
+        "incident": {"incident_id": "DEMO-INC-008", "service": "payment-service", "symptoms": "CPU reached 96% and payment p95 rose to 1.7s after fraud rules update", "environment": "staging", "deployment_version": "payment-5.8.0-rc2", "evidence": ["CPU 96%", "memory 68%", "gateway latency 140ms"]},
+        "root_cause": "A new fraud rule caused repeated unbounded regex evaluation",
+        "remediation_attempts": [{"action": "Scale payment replicas from 4 to 8", "outcome": "partial", "details": "CPU utilization fell but stayed above 82% and tail latency remained high.", "duration_minutes": 12}, {"action": "Disable the new rule and replace the unbounded expression with a bounded matcher", "outcome": "successful", "details": "CPU returned to 47% and p95 latency to 205ms.", "duration_minutes": 17}],
+        "lesson": "High CPU with healthy downstream latency after a rules change points to local compute cost; scaling can buy capacity but the expensive rule needs correction.",
+        "recovery_time_minutes": 17,
+        "occurred_at": "2026-09-25T15:55:00Z",
+    }),
+    ResolveIncidentRequest.model_validate({
+        "incident": {"incident_id": "DEMO-INC-009", "service": "checkout-service", "symptoms": "Database p95 latency exceeded 1.4s; pool remained below capacity", "environment": "production-sim", "deployment_version": "checkout-2.14.4", "evidence": ["pool use 71/180", "database storage IOPS at limit", "slow query on cart_items aggregation"]},
+        "root_cause": "Storage I/O saturation from an unindexed cart item aggregation",
+        "remediation_attempts": [{"action": "Increase application pool size", "outcome": "failed", "details": "More concurrent connections increased database queueing without improving throughput.", "duration_minutes": 13}, {"action": "Add the missing composite index and cap query concurrency", "outcome": "successful", "details": "Database p95 returned to 46ms and pool waiters cleared.", "duration_minutes": 28}],
+        "lesson": "A non-saturated pool with high database latency points below the connection layer; inspect query plans and storage pressure before raising pool limits.",
+        "recovery_time_minutes": 28,
+        "occurred_at": "2026-09-26T12:25:00Z",
+    }),
+    ResolveIncidentRequest.model_validate({
+        "incident": {"incident_id": "DEMO-INC-010", "service": "notification-service", "symptoms": "Notification delivery errors rose to 6.4% while mail provider returned 429", "environment": "production-sim", "deployment_version": "notify-4.2.7", "evidence": ["provider throttle 6.4%", "queue depth 4,108", "worker CPU 42%"]},
+        "root_cause": "Notification concurrency exceeded provider account rate limits",
+        "remediation_attempts": [{"action": "Restart notification workers", "outcome": "failed", "details": "Workers immediately resumed the same excessive send rate and 429 responses continued.", "duration_minutes": 3}, {"action": "Apply provider-aware rate limiting and exponential retry backoff", "outcome": "successful", "details": "429 rate fell below 0.2% and queued notifications drained without duplicate delivery.", "duration_minutes": 19}],
+        "lesson": "For provider throttling, restarting workers repeats the overload; enforce the provider's rate limit and back off retries.",
+        "recovery_time_minutes": 19,
+        "occurred_at": "2026-09-27T07:35:00Z",
+    }),
+]
